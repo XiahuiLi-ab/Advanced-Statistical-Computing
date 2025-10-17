@@ -1,0 +1,215 @@
+---
+title: "Computing in Statistics: Randomization"
+---
+
+## Practical 2: Randomization
+
+In this practical, we consider a study on the diet of the eastern horned lizard. In their study, the researchers captured three lizards from each of two size classes (1 = smaller, 2 = larger) each month from June to September and measured the weight of Orthoptera found in their guts, in milligrams.
+
+The research question was whether there were differences in gut contents between months, between size classes, or both. In particular, the researchers were interested in whether there was any interaction between the two (i.e. differences between months not being the same for each size class). The measurements made for each month, each size group, and each individual are given in the table below.
+
+![](images/Screenshot%202025-10-02%20111815.png)
+
+The data are contained in the file LizardData.csv, which is available on Moodle. Download it into your working directory and load it into R using the following commands:
+
+```{r}
+# read in data
+lizard <- read.csv("LizardData.csv")
+
+# turn the size column into a factor
+lizard$size <- as.factor(lizard$size)
+
+dim(lizard)
+str(lizard)
+summary(lizard)
+```
+
+### Exercise 1: Plot the data
+
+Plot the data separately for each month and class. What is unusual about these data?
+
+```{r}
+library(ggplot2)
+ggplot(data = lizard) + 
+  geom_point(aes(x = size, y = orthoptera), shape = 1) +
+  facet_wrap(~month) + 
+  xlab("Size") + 
+  ylab("Orthoptera") +
+  theme_bw()
+```
+
+### Exercise 2: Check the residuals
+
+These kind of data fall neatly within the classic analysis of variance (ANOVA) framework: we have a two-way analysis of variance with replication, i.e. the model:
+
+$$
+y_{ijk} = \beta_i + \beta_j + \beta_{ij} + \epsilon_{ijk}
+$$
+
+where $y_{ijk}$ is the recorded gut contents from lizard $k$ in size class $j$ in month $i$, $\beta_i$ is the main effect for month, $\beta_j$ is the main effect for size class, $\beta_{ij}$ is the interaction, and $\epsilon_{ijk}$ is the error term. We assume $$\epsilon_{ijk} \sim N(0, \sigma^2)$$.
+
+You can analyse the data in R using either aov (analysis of variance) or lm() (linear model) - they do pretty much the same but give outputs in slightly different formats. Here, the researchers used the function aov():
+
+```{r}
+# perform a two-way ANOVA
+mod <- aov(orthoptera ~ size * month, data = lizard)
+summary(mod)
+```
+
+The p-value in the summary are results from a test of the null hypothesis that the relevant $\beta$-parameters are zero. You can see that neither the interaction nor the main effects are statistically significant at an $\alpha$-level of 0.05.
+
+```{r}
+oldPar <- par(no.readonly = TRUE) # save plotting parameters
+
+# diagnostic plot
+par(mfrow = c(2, 2))
+plot(mod, which = 1:5)
+```
+
+```{r}
+par(oldPar)
+```
+
+The plots show that **rows 22, 23, and 24 are outliers/influential**, especially row 23. Revisit the raw data to note the characteristics (month, size, and gut content) associated with the outliers.
+
+Plotting the residuals, we see they look **strongly non-normal**. The model used, however, assumes they are normally distributed - so the data does not seem to fit well with the model. This called into question the results from the hypotheses tests used. In particular, these tests assume that the F-statistic reported has an F distribution with the stated degrees of freedom of 3 and 16. If this is not true, then these tests are not reliable and, as a consequence, our conclusions are not reliable.
+
+```{r}
+?plot.lm
+```
+
+### Exercise 3: Randomization test
+
+Given we suspect the distribution of the F-statistic is not an F distribution, we need some way to approximately compute what the distribution of the F-statistic is and then compute the p-value from this. We can use a randomization algorithm to do this (concentrating on the interaction term only):
+
+-   Repeat the following steps lots of times (say 999):
+
+    -   Obtain a new data set by randomization.
+
+    -   Analyse the new data set by performing an ANOVA.
+
+    -   Find the F-value for the interaction effect and save it.
+
+-   Determine the proportion of the 999 replicates that have an F-value as extreme (larger), or more extreme than the one we obtained from the original data.
+
+How should we randomize the data? Under the null hypothesis, all of the data come from the same distribution, so we can generate random realizations by randomly assigning the response (gut contents) to each month and size class, with the constraint of keeping three replicate samples within each class. An easy way to do this is to reorder the data:
+
+```{r}
+newOrthoptera <- sample(lizard$orthoptera, length(lizard$orthoptera), replace = FALSE)
+```
+
+You can then analyse the new data set using:
+
+```{r}
+newMod <- aov(newOrthoptera ~ size * month, data = lizard)
+summary(newMod)
+```
+
+Now you want to extract the relevant F-value. The easiest way is to examine the structure of the ANOVA table created with the anova() function applied to the object created by the aov() function:
+
+```{r}
+newAnova <- anova(newMod)
+newAnova
+```
+
+The fourth column contains the F-values for all terms in the model. The interaction term is the third term, so we want cell \[3, 4\] of this object.
+
+```{r}
+interactionFValues <- newAnova["size:month", "F value"]
+interactionFValues
+```
+
+1.  Implement the randomization test for the interaction term. How many resamples should you take?
+    -   The input is the data and the number of randomization.
+    -   The output should be a list containing the following elements: (i) originalFValue (a scalar containing the F-value from the original data); (ii) interactionFVector (a vector of the replocate F-values; and (iii) pValue ( a scalar containing the p-value from the randomization, i.e. the proportion of the replicate F-values that are equal to or larger than the original F-value).
+
+```{r}
+# Purpose: performs a randomisation test on the interaction term in a two-way ANOVA.
+
+# Implementation note: No checks are made on the veracity of the input variables.  Store the number of samples in the input data frame
+
+RandtestInteraction <- function(dataIn, b = 999){
+  numData <- dim(dataIn)[1]
+  
+    # Reserve space to store the interactionFVector
+    interactionFVector <- numeric(length = b + 1)
+    
+    # Loop round, performing the randomisation
+    for (i in 1:b) {
+        # Create randomized data set of response values
+        replicateData <- sample(dataIn[, 3], numData, replace = FALSE)
+        # Perform ANOVA on randomised data set
+        replicateResult <- aov(replicateData ~ dataIn[,1] * dataIn[, 2])
+        # Store resulting F-value
+        anovaTable <- anova(replicateResult)
+        interactionFVector[i] <- anovaTable["dataIn[, 1]:dataIn[, 2]", "F value"]
+    }
+    # Perform similar analysis on the original data and store the result
+    analysisActualData <- aov(dataIn[, 3] ~ dataIn[, 1] * dataIn[, 2])
+    
+    actualAnova <- anova(analysisActualData)
+    originalFValue <- actualAnova["dataIn[, 1]:dataIn[, 2]", "F value"]
+    interactionFVector[b + 1] <- originalFValue
+    # Calculate the p-value
+    sum <- sum(interactionFVector >= originalFValue)
+    originalExceedsProportion <- sum(interactionFVector >= originalFValue)/(b + 1)
+    return(list(
+                interactionFVector = interactionFVector,
+                sum = sum,
+                originalFValue = originalFValue, 
+                pValue = originalExceedsProportion))
+}
+
+
+```
+
+```{r}
+randomisation <- RandtestInteraction(lizard, b = 999)
+str(randomisation)
+```
+
+```{r}
+str(RandtestInteraction(lizard, b = 99))
+str(RandtestInteraction(lizard, b = 999))
+str(RandtestInteraction(lizard, b = 9999))
+```
+
+### Exercise 4: Compare the results
+
+Does the p-value obtained by randomization differ from that obtained assuming the F-statistic follows an F distribution? Plot a histogram of the F-values obtained by randomization, draw the appropriate F distribution on top, and compare the two. Add the observed F-statistic and, based on the plot, explain why the p-values differ from each other.
+
+```{r}
+print(paste("P-value from analysis of actual data = ", round(anova(mod)["size:month", "Pr(>F)"], 4)))
+print(paste("P-value from randomisation test = ", randomisation$pValue))
+```
+
+```{r}
+
+interactionFVector <- randomisation$interactionFVector
+originalFValue <- randomisation$originalFValue
+
+# Histogram of the F-values from the randomisation
+hist(interactionFVector, freq = FALSE, xlab = "", main = "Interaction term",
+    sub = paste0("Histogram from randomisation, dashed line is F-\n",
+        "distribution, vertical is observed test statistic"),
+    col = "grey95", border = "grey75")
+# Compute values from the F distribution with 3 and 16 degrees of freedom (the appropriate df for the interaction term)
+
+numeratorDF <- newAnova["size:month", "Df"]
+denominatorDF <- newAnova["Residuals", "Df"]
+curve(df(x, numeratorDF, denominatorDF), from = 0, to = max(interactionFVector),
+    lty = 2, add = TRUE)
+# Draw a vertical line showing where the original F-value was
+abline(v = originalFValue, lty = 3, lwd = 1.5)
+# http://www.fernandohrosa.com.br/en/P/shaded_areas_in_r/ (on plotting shaded areas)
+
+shade.x <- c(originalFValue, seq(originalFValue, max(interactionFVector) +
+    0.5, length.out = 50), max(interactionFVector) + 0.5)
+shade.y <- c(0, df(shade.x[-c(1, length(shade.x))], numeratorDF,
+    denominatorDF), 0)
+polygon(shade.x, shade.y, col = adjustcolor("red", alpha.f = 0.15))
+one <- 1 - pf(originalFValue, 3, 16)
+text(x = originalFValue - 0.7, y = 1, cex = 0.6, pos = 4,
+    paste("Shaded area =", round(one, 3), "\nHistogram within shade =",
+        round(randomisation$pValue, 3)))
+```

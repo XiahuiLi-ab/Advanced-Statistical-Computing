@@ -1,0 +1,209 @@
+---
+title: "Computing in Statistics: Newton Optimization"
+---
+
+A mining company wants to predict the effect of installing a mining shaft into the ground. In particular, the aim is to predict how much surrounding ground will sink once a shaft is installed. The company collected data for previous mining shaft sites.
+
+The following variables were recorded: the width of the excavation for the shaft, the depth of the excavation, and the amount of sink (measured as the angle between the perpendicular to the edge of the excavation and the line connecting this same edge to the point on the surface for which there is no sinking of the ground).
+
+```{r}
+library(readr)
+MiningData <- read_csv("Advanced_Computation_Data/MiningData.csv")
+head(MiningData)
+```
+
+The company decides that the following model explains the relationship between these variables:
+
+$$
+y_i=34(1-exp(-\beta x_i))+r_i,
+$$
+
+where $y_i$ is the angle measured for site $i$, $x_i$ is the ratio of width over the depth of the excavation, and $r_i$ are independent and identically distributed Normal random variables.
+
+```{r}
+x <- MiningData$width / MiningData$depth
+y <- MiningData$angle
+mining <- as.data.frame(cbind(x, y))
+plot(mining)
+```
+
+The statistical problem you are asked to solve for the mining company is to find the optimal value for $\beta$ that minimises the residual sum of squares:
+
+$$
+R(\theta)=\sum^{n}_{i=1}r_i(\beta)^2=\sum^{n}_{i=1}(y_i-34(1-exp(-\beta x_i))^2.
+$$
+
+Let's solve the problem using Newton's method.
+
+### Exercise 1: Starting Values
+
+For Newton's method, you will require a starting value $\beta^{(0)}$. You can pick any values for $x$ and $y$ and solve for $\beta$:
+
+$$
+\beta=\frac{-\text{In}(1-y/34)}{x}
+$$
+
+With this approach, you can select a starting value and plot the data and predictions from the model together.
+
+```{r}
+# Select starting values
+
+x0 <- mining[2,1]
+y0 <- mining[2,2]
+beta0 <- -log(1 - (y0/34))/x0
+beta0
+```
+
+```{r}
+
+plot(mining$x, mining$y, xlab = "x", ylab = "y")
+xgr <- seq(min(mining$x), max(mining$x), length = 100)
+pred <- 34 * (1 - exp(-beta0 * xgr))
+lines(xgr, pred)
+```
+
+### Exercise 2: Objective Function
+
+Newton's method requires the objective function to be defined.
+
+Write a function that computes $R(\beta)$ and takes inputs: beta and data (the mining dataframe with $x$ and $y$ columns). Function should return the residual sum of squares.
+
+```{r}
+RSS <- function(beta, data){
+  pred <- 34 * (1 - exp(-beta * data$x))
+  squaredRes <- (data$y - pred) ^ 2
+  rss <- sum(squaredRes)
+  return(rss)
+}
+
+RSS(beta0, mining)
+```
+
+### Exercise 3: Gradient and Second Derivative
+
+Newton's method also requires you can compute the gradient and the second derivative of your objective function. Sometimes, you can do this analytically. Alternatively, you can numerically approximate the derivatives by finite differencing.
+
+The finite difference approximation to the first derivative of a function $f(x)$ is:
+
+$$
+\frac{df}{dx} \approx \frac{f(x + \delta)-f(x)}{\delta}
+$$
+
+for some $\delta$. There is a package in R that can do finite differencing, the package is called numDeriv.
+
+Compute the gradient and the second derivative for your function RSS for parameter value beta and data mining.
+
+```{r}
+library(numDeriv)
+
+# Compute gradient vector and Hessian matrix
+grad(RSS, beta0, data = mining)
+hessian(RSS, beta0, data = mining)
+```
+
+### Exercise 4: Newton Update
+
+Newton's method has the following algorithm:
+
+-   Set $\beta$ to the starting value.
+
+-   While stopping rule not fulfilled:
+
+1.  Compute gradient $g$ at $\beta$;
+
+2.  Compute second derivative $h$ at $\beta$;
+
+3.  Solve for update step $\delta=-g/h$;
+
+4.  Update parameter $\beta \leftarrow \beta + \delta$;
+
+5.  Check if stopping rule is fulfilled.
+
+Step 5 requires a stopping rule. One possible choice would be the relative step length (i.e. if the relative step length is small then convergence has been reached):
+
+$$
+\frac{\lvert\delta \rvert}{\lvert\beta \rvert} < \epsilon,
+$$
+
+Write a function that implements Newton's method, with input:
+
+-   start: a starting value;
+
+-   f: the objective function to be minimised;
+
+-   data: the dataframe used by f with columns x and y;
+
+-   maxit: maximum number of iterations to try;
+
+-   tol: tolerance is e where iterations stop when current iterate x changes by less than 100e%.
+
+The output is a list with elements:
+
+-   estimate: a vector of the optimal estimates;
+
+-   value: value of the objective function at the optimum;
+
+-   g: gradient at the optimum;
+
+-   h: second derivative at the optimum;
+
+-   conv: is TRUE if convergence was satisfied, otherwise may not have converged on optimum;
+
+-   niter: number of iterations taken.
+
+```{r}
+Newton <- function(start, f, data, maxit, tol){
+  
+  # set starting values
+  theta <- start
+  
+  # setup loop
+  iter <- 0
+  loop <- TRUE
+  conv <- FALSE
+  while(loop){
+    iter <- iter + 1
+    g <- grad(f, theta, data = data)
+    h <- hessian(f, theta, data = data)
+    delta <- as.numeric(-g/h)
+    if(abs(delta/theta) < tol | iter > maxit){
+      loop <- FALSE
+    }
+    
+    theta <- theta + delta
+  }
+  
+  if (abs(delta/theta) < tol){
+    conv <- TRUE
+  } else{
+    conv <- FALSE
+  }
+  
+  return(list(estimate = theta,
+              value = f(theta, data),
+              g = grad(f, theta, data = data),
+              h = hessian(f, theta, data = data),
+              conv = conv,
+              niter = iter))
+}
+```
+
+```{r}
+result <- Newton(beta0, RSS, mining, maxit = 1000, tol = 1e-10)
+result
+```
+
+### Exercise 5: Using optimize()
+
+A bisection algorithm is used by the R-function optimize(). The function requires two inputs: the objective function and an initial search interval. It will also require any auxiliary information such as the data.
+
+Use this function to optimise the residual sum of squares and compare the parameter estimate to those obtained above.
+
+```{r}
+opt <- optimize(RSS, c(-10, 10), data = mining)
+opt$minimum
+```
+
+```{r}
+result$estimate
+```
