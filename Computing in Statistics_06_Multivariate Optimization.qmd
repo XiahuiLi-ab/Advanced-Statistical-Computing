@@ -1,0 +1,328 @@
+---
+title: "Computing in Statistics: Multivariate Optimization"
+---
+
+## Recap and Added Parameter
+
+A mining company wants to predict the effect of installing a mining shaft into the ground. In particular, the aim is to predict how much surrounding ground will sink once a shaft is installed. The company collected data for previous mining shaft sites.
+
+The following variables were recorded: the width of the excavation for the shaft, the depth of the excavation, and the amount of sink (measured as the angle between the perpendicular to the edge of the excavation and the line connecting this same edge to the point on the surface for which there is no sinking of the ground).
+
+The company decides that the following model explains the relationship between these variables:
+
+$$
+y_i=\alpha(1-exp(-\beta x_i))+r_i,
+$$
+
+where $y_i$ is the angle measured for site $i$, $x_i$ is the ratio of width over the depth of the excavation, and $r_i$ are independent and identically distributed Normal random variables.
+
+The statistical problem you are asked to solve for the mining company is to find the optimal values $\hat{\theta}=(\hat{\alpha},\hat{\beta})$ that minimize the residual sum of squares:
+
+$$
+R(\theta)=\sum_{i=1}^{n}r_i(\theta)^2=\sum_{i=1}^n(y_i-\alpha(1-exp(-\beta x_i))^2.
+$$
+
+You decide to solve this problem using the multivariate Newton's method.
+
+```{r}
+library(readr)
+MiningData <- read_csv("Advanced_Computation_Data/MiningData.csv")
+
+
+x <- MiningData$width / MiningData$depth
+y <- MiningData$angle
+mining <- as.data.frame(cbind(x, y))
+
+```
+
+## Exercise 1: Starting Value
+
+For Newton's method, you will require starting values $\theta^{(0)}=(\alpha^{(0)}, \beta^{(0)})$. One approach to doing this is to consider values of $x$ where all but one of the parameters are removed, allowing us to solve for the remaining parameter. For example, when $x\to\infty$, the function asymptotes and this asymptote only depends on $\alpha$. One you have a value for $\alpha$, you can pick any values for $x$ and $y$ and solve for $\beta$.
+
+Obtain starting values for $\alpha$ and $\beta$. Plot the data and your starting curve to produce a plot.
+
+```{r}
+# Starting values
+alpha0 <- 34
+beta0 <- 1
+
+# Plot
+plot(mining$x, mining$y, xlab = "x", ylab = "y")
+xgr <- seq(min(mining$x), max(mining$x), length = 100)
+pred <- alpha0 * (1 - exp(-beta0 * xgr))
+lines(xgr, pred)
+```
+
+## Exercise 2: Objective Function
+
+Newton’s method requires the objective function to be defined.
+
+Adapt your `RSS()` function from Practical 5 that computes $R(\theta)$ to take inputs (in this order): `theta` (a vector containing parameters) and `data` (the mining dataframe). Your function should return the residual sum of squares.
+
+```{r}
+RSS <- function(theta, data){
+  pred <- theta[1] * (1 - exp(-theta[2] * data$x))
+  squaredRes <- (data$y - pred) ^ 2
+  rss <- sum(squaredRes)
+  return(rss)
+}
+
+theta0 <- c(alpha0, beta0)
+RSS(theta0, mining)
+```
+
+## Exercise 3: The Newton Update
+
+Newton's method has the following algorithm:
+
+-   Set $\theta$ to the starting value.
+
+-   While stopping rule not fulfilled:
+
+1.  Compute gradient $g$ at $\theta$;
+
+2.  Compute second derivative $H$ at $\theta$;
+
+3.  Solve for update step $\delta$ such that $H\delta=-g$;
+
+4.  Update parameter $\theta \leftarrow \theta + \delta$;
+
+5.  Check if stopping rule is fulfilled.
+
+Steps 1 and 2 involve computing the gradient vector and the Hessian matrix, both of which can be approximately computed using the `numDeriv`-package. Step 3 involves solving the linear system, in r, a linear system of the form $Av=b$ can be solved for $v$ using the `solve()` command. Step 5 requires a stopping rule. One possible choice would be the relative step length (i.e. if the relative step length is small then convergence has been reached):
+
+$$ \frac{||\delta ||}{||\beta ||} < \epsilon, $$
+
+where $||v||=\sqrt{v_1^2+v_2^2}$ is the Euclidean norm.
+
+Write a function that implements the multivariate Newton's method, with input:
+
+-   start: a vector of starting values;
+
+-   f: the objective function to be minimised;
+
+-   data: the dataframe used by f with columns x and y;
+
+-   maxit: maximum number of iterations to try;
+
+-   tol: tolerance is e where iterations stop when current iterate x changes by less than 100e%.
+
+```{r}
+
+# Compute the Euclidean norm of a vector
+Norm <- function(x) {
+    return(sqrt(sum(x^2)))
+}
+
+# Optimise a function f using Newton's method INPUTS:
+# start: vector of starting values f: function to be
+# minimised data: dataframe with x and y columns
+# maxit: maximum number of iterations to try tol:
+# tolerance is e where iterations stop when current
+# iterate x changes by less than 100e% OUTPUTS: a list
+# with elements: - estimate: a vector of the optimal
+# estimates - value: value of the objective function
+# at the optimum - g: gradient vector at the optimum -
+# H: hessian at the optimum - conv: is TRUE if
+# convergence was satisfied, otherwise may not have
+# converged on optimum - niter: number of iterations
+# taken
+Newton <- function(start, f, data, maxit = 1000, tol = 1e-10) {
+    # set starting values
+    theta <- start
+    # setup loop
+    iter <- 0
+    loop <- TRUE
+    conv <- FALSE
+    while (loop) {
+        iter <- iter + 1
+        # compute gradient and hessian
+        g <- grad(f, theta, data = data)
+        H <- hessian(f, theta, data = data)
+        # solve for step to take
+        delta <- solve(H, -g)
+        # check stopping criterion
+        if (Norm(delta)/Norm(theta) < tol | iter > maxit) {
+            loop <- FALSE
+        }
+        # update theta
+        theta <- theta + delta
+    }
+    # check convergence
+    if (Norm(delta)/Norm(theta) < tol) {
+        conv <- TRUE
+    } else {
+        conv <- FALSE
+    }
+    return(list(estimate = theta, value = f(theta, data),
+        g = grad(f, theta, data = data), H = hessian(f,
+            theta, data = data), conv = conv, niter = iter))
+}
+```
+
+```{r}
+Newton(theta0, RSS, mining, maxit = 1000, tol = 1e-10)$estimate
+```
+
+## Exercise 4: Using nlm()
+
+A similar Newton-type algorithm is used by the R-function `nlm()`. The `nlm()`-function requires two inputs: `f` the objective function and `p` the starting values. It will also require any auxiliary information such as the data. See `?nlm` for further details.
+
+Use the `nlm()`-function to optimise the residual sum of squares and compare the parameter estimates to those obtained above.
+
+```{r}
+opt <- nlm(RSS, theta0, data = mining)
+opt$estimate
+```
+
+## Exercise 5: Using analytical derivatives
+
+The above algorithms have approximated the gradient vector and the Hessian matrix. For this problem, both of these quantities can be derived analytically. For example,
+
+$$
+\frac{\partial f}{\partial \alpha}=-2\sum_{i=1}^n r_i(1-exp(-\beta x_i)).
+$$
+
+Here are functions that compute the exact gradient vector and Hessian matrix:
+
+```{r}
+# Compute gradient vector for objective function f
+# INPUTS: theta: parameter vector data: dataframe with
+# x and y columns OUTPUTS: vector of gradients in each
+# direction
+df <- function(theta, data) {
+    # compute residuals r for each data point
+    pred <- theta[1] * (1 - exp(-theta[2] * data$x))
+    r <- data$y - pred
+    # df/da
+    dfa <- -2 * (1 - exp(-theta[2] * data$x)) * r
+    # df/db
+    dfb <- -2 * theta[1] * data$x * exp(-theta[2] * data$x) *
+        r
+    return(c(sum(dfa), sum(dfb)))
+}
+
+# Compute Hessian matrix for objective function f
+# INPUTS: theta: parameter vector data: dataframe with
+# x and y columns OUTPUTS: Hessian matrix of second
+# derivatives
+d2f <- function(theta, data) {
+    # compute residuals for each data point
+    pred <- theta[1] * (1 - exp(-theta[2] * data$x))
+    r <- data$y - pred
+    # compute d2f / da2
+    dfaa <- 2 * sum((1 - exp(-theta[2] * data$x))^2)
+    # d2f / db2
+    dfbb <- 2 * sum(theta[1]^2 * data$x^2 * exp(-2 * theta[2] *
+        data$x) + r * theta[1] * data$x^2 * exp(-theta[2] *
+        data$x))
+    # d2f / dab
+    dfab <- 2 * sum(theta[1] * data$x * exp(-theta[2] *
+        data$x) * (1 - exp(-theta[2] * data$x)) - r * data$x *
+        exp(-theta[2] * data$x))
+    # H = hessian
+    H <- matrix(c(dfaa, dfab, dfab, dfbb), nrow = 2, ncol = 2)
+    return(H)
+}
+```
+
+1.  Compare the approximate derivatives from with the exact ones computed with the functions above. Can you make any improvements to these functions (hint: DRY principle)?
+
+    ```{r}
+    library(numDeriv)
+    # Approximate derivatives:
+    grad(RSS, theta0, data = mining)
+    hessian(RSS, theta0, data = mining)
+
+    # Exact derivatives:
+    df(theta0, data = mining)
+    d2f(theta0, data = mining)
+    ```
+
+2.  Adapt your newton optimisation function to take two new inputs `gfn()` (a function that computes the gradient vector) and `Hfn()` (a function that computes the Hessian). Can you write a function that will use `numDeriv` when these are not supplied, but use the exact derivatives when the user supplies them?
+
+    ```{r}
+    # Optimise a function f using Newton's method INPUTS:
+    # start: vector of starting values f: function to be
+    # minimised data: dataframe with x and y columns gfn:
+    # (optional) gradient function of f, uses finite
+    # differencing otherwise Hfn: (optional) hessian
+    # function of f, uses finite differencing otherwise
+    # maxit: maximum number of iterations to try tol:
+    # tolerance is e where iterations stop when current
+    # iterate x changes by less than 100e% OUTPUTS: a list
+    # with elements: - estimate: a vector of the optimal
+    # estimates - value: value of the objective function
+    # at the optimum - g: gradient vector at the optimum -
+    # H: hessian at the optimum - conv: is TRUE if
+    # convergence was satisfied, otherwise may not have
+    # converged on optimum - niter: number of iterations
+    # taken
+    Newton <- function(start, f, data, gfn = NULL, Hfn = NULL,
+        maxit = 1000, tol = 1e-10) {
+        # if not gradient or Hessian then use numDeriv
+        if (is.null(gfn)) {
+            gfn <- function(theta, data) {
+                grad(f, theta, data = data)
+            }
+        }
+        if (is.null(Hfn)) {
+            Hfn <- function(theta, data) {
+                hessian(f, theta, data = data)
+            }
+        }
+        # set starting values
+        theta <- start
+        # setup loop
+        iter <- 0
+        loop <- TRUE
+        conv <- FALSE
+        while (loop) {
+            iter <- iter + 1
+            # compute gradient and hessian
+            g <- gfn(theta, data)
+            H <- Hfn(theta, data)
+            # solve for step to take
+            delta <- solve(H, -g)
+            # check stopping criterion
+            if (Norm(delta)/Norm(theta) < tol | iter > maxit) {
+                loop <- FALSE
+            }
+            # update theta
+            theta <- theta + delta
+        }
+        # check convergence
+        if (Norm(delta)/Norm(theta) < tol) {
+            conv <- TRUE
+        } else {
+            conv <- FALSE
+        }
+        return(list(estimate = theta, value = f(theta, data),
+            g = gfn(theta, data), H = Hfn(theta, data), conv = conv,
+            niter = iter))
+    }
+    ```
+
+3.  Compare the performance of the Newton optimiser when it has no exact derivatives, when it has gradient but not Hessian, and when it has both. You can compare the number of iterations until convergence, the optimal value of $f$ found, and the time taken to run the function (using the `system.time()` command).
+
+    ```{r}
+    # Run with no analytic derivatives
+    system.time(opt1 <- Newton(theta0, RSS, mining, maxit = 10))
+    opt1$niter
+    opt1$estimate
+    opt1$value
+    # Run with known gradient, but no Hessian
+    system.time(opt2 <- Newton(theta0, RSS, mining, gfn = df))
+    opt2$niter
+    opt2$estimate
+    opt2$value
+    # Run with known analytic derivatives
+    system.time(opt3 <- Newton(theta0, RSS, mining, gfn = df,
+        Hfn = d2f))
+    opt3$niter
+    opt3$estimate
+    opt3$value
+    # Compare with nlm()
+    opt$estimate
+    opt$minimum
+    ```
